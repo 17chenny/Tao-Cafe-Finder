@@ -11,10 +11,34 @@ import streamlit as st
 from streamlit_folium import st_folium
 import urllib.parse
 import requests
-from streamlit_geolocation import streamlit_geolocation
+
+# 嘗試載入定位套件，如果本機沒安裝則進行防呆提示
+try:
+    from streamlit_geolocation import streamlit_geolocation
+    HAS_GEOLOCATION_MODULE = True
+except ModuleNotFoundError:
+    HAS_GEOLOCATION_MODULE = False
 
 # 設定網頁標題與圖標
 st.set_page_config(page_title="桃憩時光 - 桃園智慧咖啡廳搜尋", page_icon="☕", layout="wide")
+
+# 如果檢查到本機沒安裝套件，直接在網頁頂端給予引導，避免程式崩潰
+if not HAS_GEOLOCATION_MODULE:
+    st.error("❌ 偵測到您的電腦環境尚未安裝 `streamlit-geolocation` 定位套件！")
+    st.markdown("""
+    ### 🛠️ 請照著以下步驟在 VS Code 終端機安裝它：
+    1. 點擊下方 VS Code 終端機（Terminal）打字區，按鍵盤 **`Ctrl + C`** 結束目前的運行。
+    2. 輸入並執行以下安裝指令：
+       ```bash
+       pip install streamlit-geolocation
+       ```
+    3. 安裝完成後，重新輸入指令啟動：
+       ```bash
+       streamlit run app.py
+       ```
+    *（完成上述步驟後，這個錯誤提示就會消失，系統就能完美定位囉！）*
+    """)
+    st.stop()
 
 # --- 效能優化：使用 Cache 快取資料庫，避免每次操作都重新讀取 CSV ---
 @st.cache_data
@@ -113,7 +137,7 @@ if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
         <style>
         /* 找到定位按鈕並把它放大 */
         button[title="Get Location"] {
-            transform: scale(4.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
+            transform: scale(4.0); /* 這裡的 4.0 代表放大四倍 */
             transform-origin: left center; /* 讓它從左邊開始放大，避免跑版 */
             margin-top: 15px;
             margin-bottom: 15px;
@@ -137,12 +161,19 @@ if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
     else:
         st.warning("""
         ⚠️ **【系統提示：等待定位中】**
-        請點擊上方按鈕，並在手機彈出的視窗選擇「允許」。
+        請點擊上方按鈕，並在手機或瀏覽器彈出的視窗選擇「允許」。
         如果依然無法定位，請勾選上方的 **「❌ 不同意位置追蹤」** 進行手動輸入。
         """)
         st.info("ℹ️ 目前地圖暫時先幫您以預設起點【中壢火車站】載入。")
+else:
+    st.write("#### 🏠 手動設定您的位置（測試或特定起點專用）")
+    user_start_input = st.text_input("輸入地址或地標：", value="中壢火車站")
+    
+    my_lat, my_lng = geocode_address(user_start_input)
+    st.success(f"🏠 地圖已成功定位至您指定的起點：【{user_start_input}】")
+    current_loc_title = f"{user_start_input}"
 
-# ─── 側邊欄與地圖渲染 (維持原樣) ───
+# ─── 側邊欄與地圖渲染 ───
 st.sidebar.header("🔍 搜尋與篩選條件")
 user_keyword = st.sidebar.text_input("請輸入咖啡廳店名關鍵字：", placeholder="例如：妮咖啡...")
 transport_mode = st.sidebar.selectbox("🚗 請選擇您的代步工具：", ("🚶 步行", "🛵 機車", "🚗 汽車"))
@@ -173,7 +204,7 @@ st.sidebar.write("📌 空間與氛圍標籤（可複選）：")
 tag_dict = {
     "pudding": st.sidebar.checkbox("🍮 布丁好吃"),
     "basque": st.sidebar.checkbox("🍰 巴斯克好吃"),
-    "midnight": st.sidebar.checkbox("🌙 主打深夜"),
+    "midnight": st.sidebar.checkbox("🌙 主主打深夜"),
     "study": st.sidebar.checkbox("💻 適合讀書"),
     "chat": st.sidebar.checkbox("💬 適合聊天"),
     "photo": st.sidebar.checkbox("📷 適合拍照"),
