@@ -28,7 +28,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 # 2. 正向地理編碼：將文字地址轉成經緯度
 def geocode_address(address):
-    # 預設改為中壢火車站座標
+    # 預設為中壢火車站座標
     default_lat, default_lng = 24.9537, 121.2256
     if not address.strip() or address == "中壢火車站":
         return default_lat, default_lng
@@ -93,35 +93,40 @@ location_consent = st.radio(
     horizontal=True
 )
 
-# 宣告初始座標（備援/預設改為中壢火車站）
+# 宣告初始座標（預設改為中壢火車站）
 my_lat, my_lng = 24.9537, 121.2256
-location_message = "🟢 預設起點已設定為：【中壢火車站】"
 current_loc_title = "中壢火車站"
+is_gps_success = False
 
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
-    st.info("📡 正在透過瀏覽器取得您的 GPS 精確定位，請確保您的手機或電腦瀏覽器「允許」此網頁存取位置資訊。")
+    # 📡 嘗試呼叫 JavaScript 獲取經緯度
     gps_location = streamlit_js_eval(data_of='get_geolocation', re_key='user_location')
     
     if gps_location and 'coords' in gps_location:
         my_lat = gps_location['coords']['latitude']
         my_lng = gps_location['coords']['longitude']
         real_address = reverse_geocode(my_lat, my_lng)
-        location_message = f"🎯 GPS 定位成功！系統偵測到您目前位於：【{real_address}】"
+        st.success(f"🎯 GPS 定位成功！系統偵測到您目前位於：【{real_address}】")
         current_loc_title = f"您的位置 ({real_address})"
+        is_gps_success = True
     else:
-        location_message = "⚠️ 瀏覽器 GPS 訊號同步中或權限未完全開啟。若地圖未正確移動，請點選右側「❌ 不同意位置追蹤」即可直接使用【中壢火車站】或手動設定起點！"
-        current_loc_title = "預設起點 (中壢火車站)"
+        # 🌟 妳要的防呆提醒視窗功能！當定位沒成功或被權限拒絕時跳出
+        st.warning("""
+        ⚠️ **【系統提示：自動定位未成功】**
+        
+        偵測到您的瀏覽器拒絕了位置權限，或是手機 GPS 訊號同步超時。
+        
+        **💡 解決方法：**
+        請直接勾選上方的 **「❌ 不同意位置追蹤，我想自行輸入起點」** 欄位，系統將為您切換至手動模式，您可以自由輸入您想出發的任何地址（如：中壢火車站、或您目前的所在地址）！
+        """)
+        st.info("ℹ️ 目前地圖暫時先幫您以預設起點【中壢火車站】載入。")
 else:
-    # 🌟 修改亮點：預設直接幫填入「中壢火車站」
     st.write("#### 🏠 手動設定您的位置（測試或特定起點專用）")
     user_start_input = st.text_input("輸入地址或地標：", value="中壢火車站")
     
-    # 自動根據輸入的文字更新經緯度座標
     my_lat, my_lng = geocode_address(user_start_input)
-    location_message = f"🏠 地圖已成功定位至您指定的起點：【{user_start_input}】"
+    st.success(f"🏠 地圖已成功定位至您指定的起點：【{user_start_input}】")
     current_loc_title = f"{user_start_input}"
-
-st.success(location_message)
 
 # ─── 側邊欄：搜尋與篩選條件 ───
 st.sidebar.header("🔍 搜尋與篩選條件")
@@ -171,7 +176,7 @@ action_verb = "步行" if "步行" in transport_mode else ("騎車" if "機車" 
 current_zoom = 16 if "步行" in transport_mode else 14
 mymap = folium.Map(location=[my_lat, my_lng], zoom_start=current_zoom)
 
-# 在地圖上標出使用者的真實/設定位置
+# 在地圖上標出使用者的起點位置
 folium.Marker(
     location=[my_lat, my_lng],
     popup=f"<b>🎯 起點：{current_loc_title}</b>",
@@ -191,7 +196,7 @@ if not results.empty:
             icon=folium.Icon(color="blue", icon="coffee", prefix="fa"),
         ).add_to(mymap)
 else:
-    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間內暫無搜尋到咖啡廳。如果是手動定位到苗栗或較遠地區，記得將左側交通時間拉長，或者改回中壢附近進行測試喔！")
+    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間內暫無搜尋到咖啡廳。如果是測試手動定位到較遠地區，記得將左側交通時間拉長，或者改回中壢附近進行測試喔！")
 
 # 顯示地圖
 st_folium(mymap, width=850, height=500, key="cafe_map")
