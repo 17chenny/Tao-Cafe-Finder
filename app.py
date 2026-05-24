@@ -11,10 +11,19 @@ import streamlit as st
 from streamlit_folium import st_folium
 import urllib.parse
 import requests
-from streamlit_js_eval import streamlit_js_eval
+from streamlit_geolocation import streamlit_geolocation
 
 # 設定網頁標題與圖標
 st.set_page_config(page_title="桃憩時光 - 桃園智慧咖啡廳搜尋", page_icon="☕", layout="wide")
+
+# --- 效能優化：使用 Cache 快取資料庫，避免每次操作都重新讀取 CSV ---
+@st.cache_data
+def load_data():
+    try:
+        return pd.read_csv("cafe.csv")
+    except FileNotFoundError:
+        st.error("找不到 cafe.csv 檔案！請確認檔案與 app.py 在同一個資料夾。")
+        return pd.DataFrame()
 
 # 1. 哈維辛公式：計算兩個經緯度之間的直線距離
 def haversine(lat1, lon1, lat2, lon2):
@@ -27,8 +36,8 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 # 2. 正向地理編碼：將文字地址轉成經緯度
+@st.cache_data
 def geocode_address(address):
-    # 預設為中壢火車站座標
     default_lat, default_lng = 24.9537, 121.2256
     if not address.strip() or address == "中壢火車站":
         return default_lat, default_lng
@@ -43,7 +52,8 @@ def geocode_address(address):
         pass
     return default_lat, default_lng
 
-# 3. 反向地理編碼：將經緯度轉回一長串人類看得懂的真實地址
+# 3. 反向地理編碼：將經緯度轉回文字地址
+@st.cache_data
 def reverse_geocode(lat, lng):
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lng}&format=json"
@@ -66,11 +76,9 @@ def reverse_geocode(lat, lng):
 
 # 4. 智慧搜尋核心函式
 def search_cafes(user_lat, user_lng, selected_tags, keyword="", max_distance_km=1.0):
-    try:
-        df = pd.read_csv("cafe.csv")
-    except FileNotFoundError:
-        st.error("找不到 cafe.csv 檔案！")
-        return pd.DataFrame()
+    df = load_data()
+    if df.empty:
+        return df
 
     df["distance"] = df.apply(lambda row: haversine(user_lat, user_lng, row["lat"], row["lng"]), axis=1)
     filtered_df = df[df["distance"] <= max_distance_km].copy()
@@ -93,42 +101,48 @@ location_consent = st.radio(
     horizontal=True
 )
 
-# 宣告初始座標（預設改為中壢火車站）
 my_lat, my_lng = 24.9537, 121.2256
 current_loc_title = "中壢火車站"
-is_gps_success = False
 
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
-    # 📡 嘗試呼叫 JavaScript 獲取經緯度
-    gps_location = streamlit_js_eval(data_of='get_geolocation', re_key='user_location')
+    st.info("👇 請點擊下方按鈕，讓瀏覽器確認這是您本人的操作")
     
-    if gps_location and 'coords' in gps_location:
-        my_lat = gps_location['coords']['latitude']
-        my_lng = gps_location['coords']['longitude']
+    # --- 新增的 CSS 樣式魔法 ---
+    st.markdown(
+        """
+        <style>
+        /* 找到定位按鈕並把它放大 */
+        button[title="Get Location"] {
+            transform: scale(4.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
+            transform-origin: left center; /* 讓它從左邊開始放大，避免跑版 */
+            margin-top: 15px;
+            margin-bottom: 15px;
+            margin-left: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    # ----------------------------
+
+    # 產生一個 Apple 信任的實體按鈕
+    gps_location = streamlit_geolocation()
+    
+    if gps_location and gps_location.get('latitude') is not None:
+        my_lat = gps_location['latitude']
+        my_lng = gps_location['longitude']
         real_address = reverse_geocode(my_lat, my_lng)
         st.success(f"🎯 GPS 定位成功！系統偵測到您目前位於：【{real_address}】")
         current_loc_title = f"您的位置 ({real_address})"
-        is_gps_success = True
     else:
-        # 🌟 妳要的防呆提醒視窗功能！當定位沒成功或被權限拒絕時跳出
         st.warning("""
-        ⚠️ **【系統提示：自動定位未成功】**
-        
-        偵測到您的瀏覽器拒絕了位置權限，或是手機 GPS 訊號同步超時。
-        
-        **💡 解決方法：**
-        請直接勾選上方的 **「❌ 不同意位置追蹤，我想自行輸入起點」** 欄位，系統將為您切換至手動模式，您可以自由輸入您想出發的任何地址（如：中壢火車站、或您目前的所在地址）！
+        ⚠️ **【系統提示：等待定位中】**
+        請點擊上方按鈕，並在手機彈出的視窗選擇「允許」。
+        如果依然無法定位，請勾選上方的 **「❌ 不同意位置追蹤」** 進行手動輸入。
         """)
         st.info("ℹ️ 目前地圖暫時先幫您以預設起點【中壢火車站】載入。")
-else:
-    st.write("#### 🏠 手動設定您的位置（測試或特定起點專用）")
-    user_start_input = st.text_input("輸入地址或地標：", value="中壢火車站")
-    
-    my_lat, my_lng = geocode_address(user_start_input)
-    st.success(f"🏠 地圖已成功定位至您指定的起點：【{user_start_input}】")
-    current_loc_title = f"{user_start_input}"
 
-# ─── 側邊欄：搜尋與篩選條件 ───
+# ─── 側邊欄與地圖渲染 (維持原樣) ───
 st.sidebar.header("🔍 搜尋與篩選條件")
 user_keyword = st.sidebar.text_input("請輸入咖啡廳店名關鍵字：", placeholder="例如：妮咖啡...")
 transport_mode = st.sidebar.selectbox("🚗 請選擇您的代步工具：", ("🚶 步行", "🛵 機車", "🚗 汽車"))
@@ -166,17 +180,14 @@ tag_dict = {
 }
 active_tags = [key for key, value in tag_dict.items() if value]
 
-# ─── 執行搜尋與主畫面渲染 ───
 results = search_cafes(my_lat, my_lng, active_tags, keyword=user_keyword, max_distance_km=max_dist)
 
 st.write(f"### 📍 地圖與搜尋結果")
 action_verb = "步行" if "步行" in transport_mode else ("騎車" if "機車" in transport_mode else "開車")
 
-# 渲染地圖
 current_zoom = 16 if "步行" in transport_mode else 14
 mymap = folium.Map(location=[my_lat, my_lng], zoom_start=current_zoom)
 
-# 在地圖上標出使用者的起點位置
 folium.Marker(
     location=[my_lat, my_lng],
     popup=f"<b>🎯 起點：{current_loc_title}</b>",
@@ -189,16 +200,14 @@ if not results.empty:
         t_time = round(row["distance"] / speed_per_minute)
         t_time = 1 if t_time < 1 else t_time
         popup_text = f"<b>{row['name']}</b><br>距離：{row['distance']:.2f} km<br>{action_verb}約：{t_time} 分鐘<br>營業時間：{row['open_hours']}"
-
         folium.Marker(
             location=[row["lat"], row["lng"]],
             popup=popup_text,
             icon=folium.Icon(color="blue", icon="coffee", prefix="fa"),
         ).add_to(mymap)
 else:
-    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間內暫無搜尋到咖啡廳。如果是測試手動定位到較遠地區，記得將左側交通時間拉長，或者改回中壢附近進行測試喔！")
+    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間內暫無搜尋到咖啡廳。")
 
-# 顯示地圖
 st_folium(mymap, width=850, height=500, key="cafe_map")
 
 if not results.empty:
